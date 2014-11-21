@@ -1,11 +1,20 @@
-""""
-This code was written by ML Sisk for with with the Rocha lab at Notre Dame on lightening in Alaska
-It only works with local file references Howdy
 """
+This code was written by ML Sisk for the Rocha lab at Notre Dame on lightening in Alaska
+It only works with local file references 
+
+11-21-14: TODOs
+##1. I have already fixed it so the next run will contain the accurate area_NoFire
+##2. For each year: the number of new scars with some portion of their area overlapping an old scar Will be called something like Fire_Number_Overlap
+##3. For each year: the area of new scars that overlaps scars from the previous 10 years. Will be called something like Fire_Area_Overlap
+4. For each year: the number of lightening strikes that fall within a scar from that year, but more than 10 days before it. Will be called something like Strikes_Number_Before
+5. For each year: the number of lightening strikes that fall within a scar from that year, but more than 10 days after it (if this is what you meant). Will be called something like Strikes_Number_After
+"""
+
+
 import arcpy, os, timeit
 
 
-# Input variables:
+#Input variables:
 data_directory = "E:\\GISWork_2\\Lightening\\DataFromZach\\"
 AOI_name = "Central_Alaska.shp"
 lightening_name = "Lightning1986Thru2012.shp"
@@ -20,7 +29,7 @@ TOTAL_AREA = 578885.198172 #here calculated in ArcGIS, could be done programatic
 
 
 all_years = [i for i in range(FIRST_YEAR , LAST_YEAR + 1)]
-#all_years = [2005]
+#all_years = [1991]
 break_counter = -1
 overwrite = False
 
@@ -49,18 +58,6 @@ lightening_aoi_path = output_directory + lightening_aoi_name
 fire_area_aoi_path = output_directory + fire_are_aoi_name
 
 
-#TESTING INSTANCES
-
-##lightening_path = "E:\\GISWork_2\\Lightening\\Testing\\Points.shp"
-##fire_areas_path = "E:\\GISWork_2\\Lightening\\Testing\\Areas.shp"
-##lightening_aoi_path = "E:\\GISWork_2\\Lightening\\Testing\\points_aoi.shp"
-##fire_area_aoi_path = "E:\\GISWork_2\\Lightening\\Testing\\Areas_aoi.shp"
-
-#END TESTING INSTANCES
-
-
-
-
 #Layer Names
 fire_areas_all_lyr = "all_fire_areas_layer"
 AOI_lyr = "AOI_Layer"
@@ -78,7 +75,7 @@ strikes_output_file_name = "Output_Table_Strikes_{0}-{1}.csv".format(FIRST_YEAR,
 strikes_output_file_path = output_directory + strikes_output_file_name
 strikes_header = "{0},{1},{2},{3},{4},{5},{6},{7}".format("Year","Strk_Total","Strk_Old","Strk_New","Strk_Outside","Strk_Before","Strk_After","Strk_Overlap")
 
-fires_output_name = "OutputTable_Fire.csv_{0}-{1}.csv".format(FIRST_YEAR,LAST_YEAR)
+fires_output_name = "OutputTable_Fire_{0}-{1}.csv".format(FIRST_YEAR,LAST_YEAR)
 fires_output_table = output_directory + fires_output_name
 fires_header = "{0},{1},{2},{3},{4},{5},{6},{7}".format("year","Fire_n_new","Fire_area_new","Fire_n_old","Fire_area_old","Fire_area_noFire","Fire_n_overlap","Fire_area_overlap")
 
@@ -194,7 +191,6 @@ def buildNewOverlapFile():
         deleteIfItExists(lightening_temp, True)
         deleteIfItExists(fire_intersect_file, True)
 
-#roeii
 
 def existance(both,date_single):
     """
@@ -213,7 +209,10 @@ def returnArea(the_file):
     arcpy.AddGeometryAttributes_management(the_file, "AREA", "", "SQUARE_KILOMETERS","")
     arcpy.MakeFeatureLayer_management(the_file, "temp_lyr")
     total_num = int(str(arcpy.GetCount_management("temp_lyr")))
-    if total_num  == 1:
+    if total_num == 0:
+        deleteIfItExists("temp_lyr", True)
+        return 0
+    elif total_num  == 1:
         temp_cursor = arcpy.SearchCursor("temp_lyr")
 
         for each_feature in temp_cursor:
@@ -223,10 +222,11 @@ def returnArea(the_file):
         return value
     else:
         print "ERROR"
+        arcpy.CopyFeatures_management("temp_lyr", output_directory + "Error.shp")
         deleteIfItExists("temp_lyr", True)
         return 0
 
-def processing():
+def calculateNumberOfStrikes():
     """
     Main processing of files.  Should take about 1-2 hours to run since it no longer does calculations for anything but strikes that overlap multiple fire
     11-21-2014: changed the logic so that before and after are variables that work on strikes from the same year
@@ -249,22 +249,18 @@ def processing():
         total_num = int(str(arcpy.GetCount_management(each_lightening_year_lyr)))
         print "total = ",total_num,
 
-
-        temp_fire_lyr = "temp_fire_lyr"
         each_strike_lyr = "each_strike_layer"
         deleteIfItExists(each_iterated_fire_layer, True)
         deleteIfItExists(each_iterated_lightening_layer, True)
         arcpy.MakeFeatureLayer_management(each_fire_year_lyr, each_iterated_fire_layer)
         arcpy.MakeFeatureLayer_management(each_lightening_year_lyr, each_iterated_lightening_layer)
         strike_cursor = arcpy.SearchCursor(each_iterated_lightening_layer)
-        old = 0
-        new = 0
-        outside = 0
-        overlap = 0
-        before = 0
-        after = 0
-        #for each_strike in strike_cursor:
-        #each_strike = strike_cursor.next()
+        struck_old_scar = 0
+        struck_new_scar = 0
+        struck_outside = 0
+        struck_overlap = 0
+        struck_same_year_b4_fire = 0
+        struck_same_year_after_fire = 0
         counter =0
         each10 = total_num // 10
         count10 = each10
@@ -274,52 +270,66 @@ def processing():
                 count10 +=each10
             overlap_value = int(str(each_strike.getValue(overlap_field)))
             if overlap_value == 0 : #Checking for strikes that do not overlap anything
-                outside +=1
+                struck_outside +=1
             elif overlap_value == 1:    #Checking for any strikes that overlap a single fire
                 strike_date = each_strike.getValue(lightening_date_field) #pulls the strike date
                 single_fire_date = each_strike.getValue(single_date_field) #pulls the fire date
-                days_difference = abs(single_fire_date - strike_date).days # calculatesnumber of days between the two
-                if days_difference <= DAY_RANGE:    #checking if that strike happens withing the day range
-                    new +=1
+                days_difference = abs(single_fire_date - strike_date).days # calculates number of days between the two
+                if days_difference <= DAY_RANGE:    #checking if that strike happens within the day range
+                    struck_new_scar +=1
                     #if it falls within the range, it is counted as a new strike
                 else: #if it is not within the range
                     if single_fire_date < strike_date:  #if not, is it before the fire?
-                        #if it is befre the fire , is it within the year range (here it is 10 years)
-                        if ((strike_date - single_fire_date).days / 365.2425) < YEAR_GAP:
-                            old += 1
-                        # Otherwise, it gets the value of outside
-                        else:
-                            outside +=1
-                    else:   #if nothing else, it is after the fire
-                        before +=1
-                        #print "b1",
+                        if single_fire_date.year == strike_date.year: # Did it strike within the same year? 
+                            struck_same_year_after_fire += 1 
+                        #if it struck after the fire , is it within the year range (here it is 10 years)
+                        elif ((strike_date - single_fire_date).days / 365.2425) < YEAR_GAP: #LIKE THIS IT DOES NOT DUPLICATE STRIKES AFTER THE FIRE INTO SAME_YEAR_BEFORE AND STRUCK_OLD
+                            struck_old_scar += 1
+                        else: # Otherwise, it gets the value of outside because the fire is more than 10 years before
+                            struck_outside +=1
+                    else:   #if nothing else, it must be a strike after the fire
+                        if single_fire_date.year == strike_date.year: 
+                            struck_same_year_b4_fire +=1 #if it is the same year than struck same year after fire
+                        else: # if not, than struck outside
+                            struck_outside+=1
             else:   #finally, checking those strikes that overlap more than one fire polygon
                 strike_date = each_strike.getValue(lightening_date_field)
                 eachID = each_strike.getValue(lightening_index_field)
                 selc = "\"%s\" = %s " %(lightening_index_field, eachID)
                 deleteIfItExists(each_strike_lyr, True)
-                arcpy.MakeFeatureLayer_management(each_iterated_lightening_layer, each_strike_lyr, selc)
-                arcpy.SelectLayerByLocation_management(each_iterated_fire_layer, "INTERSECT", each_strike_lyr, "", "NEW_SELECTION") #Creates a layer from
+                
+                arcpy.MakeFeatureLayer_management(each_iterated_lightening_layer, each_strike_lyr, selc) #Creates a new feature layer from the strike
+                arcpy.SelectLayerByLocation_management(each_iterated_fire_layer, "INTERSECT", each_strike_lyr, "", "NEW_SELECTION") #Creates a layer composed of those scars that overlap the feature
+                #Note: Becasue the fire layer is already selected by the data range from the strike, even though the value for overlap_value might be more than 1, there may be 0 actual overlaps
                 num_overlaps = int(str(arcpy.GetCount_management(each_iterated_fire_layer)))
                 if num_overlaps == 0:
-                    outside +=1
-                    #print "out3",
-                elif num_overlaps == 1:
-                    single_fire_date = each_strike.getValue(single_date_field)
-                    days_difference = abs(single_fire_date - strike_date).days
-                    if days_difference <= DAY_RANGE:
-                        new +=1
-                        #print "n2",
-                    else:
-                        if single_fire_date < strike_date:
-                            old += 1
-                            #print "old2",
-                        else:
-                            before +=1
-                            #print "b2",
-                else:
+                    struck_outside +=1
+                elif num_overlaps == 1: #Thus is this duplicated from above at "elif overlap_value ==1"
+                    strike_date = each_strike.getValue(lightening_date_field) #pulls the strike date
+                    single_fire_date = each_strike.getValue(single_date_field) #pulls the fire date
+                    days_difference = abs(single_fire_date - strike_date).days # calculates number of days between the two
+                    if days_difference <= DAY_RANGE:    #checking if that strike happens within the day range
+                        struck_new_scar +=1
+                        #if it falls within the range, it is counted as a new strike
+                    else: #if it is not within the range
+                        if single_fire_date < strike_date:  #if not, is it before the fire?
+                            if single_fire_date.year == strike_date.year: # Did it strike within the same year? 
+                                struck_same_year_after_fire += 1 
+                            #if it struck after the fire , is it within the year range (here it is 10 years)
+                            elif ((strike_date - single_fire_date).days / 365.2425) < YEAR_GAP: #LIKE THIS IT DOES NOT DUPLICATE STRIKES AFTER THE FIRE INTO SAME_YEAR_BEFORE AND STRUCK_OLD
+                                struck_old_scar += 1
+                            else: # Otherwise, it gets the value of outside because the fire is more than 10 years before
+                                struck_outside +=1
+                        else:   #if nothing else, it must be a strike after the fire
+                            if single_fire_date.year == strike_date.year: 
+                                struck_same_year_b4_fire +=1 #if it is the same year than struck same year after fire
+                            else: # if not, than struck outside
+                                struck_outside+=1
+                else: #This one means there are definitely multiple features
                     new_in_sample = False
                     old_in_sample = False
+                    same_year_before = False
+                    same_year_after = False
                     fire_cursor = arcpy.SearchCursor(each_iterated_fire_layer)
                     for each_fire in fire_cursor:
                         fire_date = each_fire.getValue(fire_date_field)
@@ -327,17 +337,26 @@ def processing():
                         if days_difference <= DAY_RANGE:
                             new_in_sample = True
                         else:
-                            if fire_date < strike_date:
+                            if single_fire_date.year == strike_date.year: 
+                                if single_fire_date < strike_date:
+                                    same_year_after = True 
+                                if single_fire_date > strike_date:
+                                    same_year_before = True
+                            if fire_date < strike_date: ##It is already the correct year range, so no worries here about checking for years
                                 old_in_sample = True
-                    if new_in_sample:
-                        new +=1
-                        #print "n3",
-                    else:
-                        old +=1
-                        #print "old3",
+                    if new_in_sample: #then it hit a new and that is all we care about
+                        struck_new_scar +=1
+                    else: #then it hit at least one old one, but regardless, it should be added only once
+                        if same_year_after:
+                            struck_same_year_after_fire+=1
+                        elif same_year_before :
+                            struck_same_year_b4_fire +=1
+                        else:
+                            struck_old_scar +=1
                     if new_in_sample and old_in_sample:
-                        overlap +=1
-                        #print "OVERLAP", eachID
+                        struck_overlap +=1
+                    
+
             counter +=1
             if counter == break_counter: #This is just to break the loop at a specific level, keeps it from running all 280 cells
                 print
@@ -347,8 +366,8 @@ def processing():
             deleteIfItExists(strike_cursor, True)
 
         print
-        print "          old = {0}, new = {1}, outside = {2}, overlap = {3}, before = {4}, total = {5}".format(old,new,outside,overlap,before, total_num)
-        new_line = "{0},{1},{2},{3},{4},{5},{6},{7}".format(each_year,total_num,old,new,outside,before,after,overlap)
+        print "          old = {0}, new = {1}, outside = {2}, overlap = {3}, before = {4}, total = {5}".format(struck_old_scar,struck_new_scar,struck_outside,struck_overlap,struck_same_year_b4_fire, total_num)
+        new_line = "{0},{1},{2},{3},{4},{5},{6},{7}".format(each_year,total_num,struck_old_scar,struck_new_scar,struck_outside,struck_same_year_b4_fire,struck_same_year_after_fire,struck_overlap)
         logFileWriter = open(strikes_output_file_path, 'a')
         logFileWriter.write(new_line + "\n")
         logFileWriter.close()
@@ -364,9 +383,6 @@ def calculateFireAreas():
     current_year_lyr = "current_year_lyr"
     prev_years_lyr = "prev_years_lyr"
     all_years_lyr = "all_years_lyr"
-    current_year_lyr_dis = "current_year_lyr_dis"
-    prev_years_lyr_dis = "prev_years_lyr_dis"
-    all_years_lyr_dis = "all_years_lyr_dis"
     intersect_lyr = "intersect_lyr"
     logFileWriter = open(fires_output_table, 'w')
     logFileWriter.write(fires_header + "\n")
@@ -412,6 +428,9 @@ def calculateFireAreas():
         print each_line
         logFileWriter.write(each_line + "\n")
     logFileWriter.close()
+
+
+
 def testingInstance():
     for each_year in all_years:
         fire_this_year_selc = "EXTRACT( YEAR FROM \"{0}\")  = {1}".format(fire_date_field, each_year)
@@ -427,7 +446,7 @@ start = timeit.default_timer() #This is just to time how long the program run.  
 
 
 preProcessing()
-#processing()
+calculateNumberOfStrikes()
 calculateFireAreas()
 #testingInstance()
 
