@@ -1,6 +1,6 @@
 """"
 This code was written by ML Sisk for with with the Rocha lab at Notre Dame on lightening in Alaska
-It only works with local file references
+It only works with local file references Howdy
 """
 import arcpy, os, timeit
 
